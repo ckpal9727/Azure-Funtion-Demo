@@ -1,9 +1,10 @@
 ﻿using Microsoft.Azure.Functions.Worker;
-using Microsoft.Azure.Functions.Worker.Middleware;
 using Microsoft.Azure.Functions.Worker.Http;
+using Microsoft.Azure.Functions.Worker.Middleware;
 using Microsoft.Extensions.Logging;
 using Microsoft.IdentityModel.Tokens;
 using System.IdentityModel.Tokens.Jwt;
+using System.Net;
 using System.Text;
 
 public class JwtAuthMiddleware : IFunctionsWorkerMiddleware
@@ -17,7 +18,7 @@ public class JwtAuthMiddleware : IFunctionsWorkerMiddleware
 
     public async Task Invoke(FunctionContext context, FunctionExecutionDelegate next)
     {
-        // Skip JWT for Login
+        // Allow Login without token
         if (context.FunctionDefinition.Name == "Login")
         {
             await next(context);
@@ -48,38 +49,41 @@ public class JwtAuthMiddleware : IFunctionsWorkerMiddleware
 
         try
         {
-            string secret = Environment.GetEnvironmentVariable("JwtSecret");
-            string issuer = Environment.GetEnvironmentVariable("JwtIssuer");
-            string audience = Environment.GetEnvironmentVariable("JwtAudience");
-
             var handler = new JwtSecurityTokenHandler();
-            var key = Encoding.UTF8.GetBytes(secret);
+            var secret = Environment.GetEnvironmentVariable("JwtSecret");
+            var issuer = Environment.GetEnvironmentVariable("JwtIssuer");
+            var audience = Environment.GetEnvironmentVariable("JwtAudience");
 
-            handler.ValidateToken(token, new TokenValidationParameters
-            {
-                ValidateIssuer = true,
-                ValidateAudience = true,
-                ValidateLifetime = true,
-                ValidateIssuerSigningKey = true,
-                ValidIssuer = issuer,
-                ValidAudience = audience,
-                IssuerSigningKey = new SymmetricSecurityKey(key)
-            }, out _);
+            handler.ValidateToken(token,
+                new TokenValidationParameters
+                {
+                    ValidateIssuer = true,
+                    ValidateAudience = true,
+                    ValidateLifetime = true,
+                    ValidateIssuerSigningKey = true,
+                    ValidIssuer = issuer,
+                    ValidAudience = audience,
+                    IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secret))
+                },
+                out _);
 
-            await next(context);
+            await next(context); // ✔ Token is valid
         }
         catch (Exception ex)
         {
-            _logger.LogError($"JWT failed: {ex.Message}");
+            _logger.LogError($"JWT Error: {ex.Message}");
             await WriteUnauthorized(context, "Invalid or expired token");
         }
     }
 
-    private static async Task WriteUnauthorized(FunctionContext ctx, string message)
+    private static async Task WriteUnauthorized(FunctionContext context, string message)
     {
-        var req = await ctx.GetHttpRequestDataAsync();
-        var res = req.CreateResponse(System.Net.HttpStatusCode.Unauthorized);
-        await res.WriteStringAsync(message);
-        ctx.GetInvocationResult().Value = res;
+        var req = await context.GetHttpRequestDataAsync();
+
+        var response = req.CreateResponse(HttpStatusCode.Unauthorized);
+        await response.WriteStringAsync(message);
+
+        // ✔ Correct way to return a response from middleware
+        context.SetHttpResponseData(response);
     }
 }
