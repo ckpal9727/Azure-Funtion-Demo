@@ -8,16 +8,14 @@ using System.Threading.Tasks;
 
 namespace AzureFunctionDemo.Models
 {
-    public class UserEntity : ITableEntity
+    public class UserEntity 
     {
-        public string PartitionKey { get; set; } = "Users";
-        public string RowKey { get; set; }  // Unique ID (email or guid)
+        public int Id { get; set; } 
+       
 
         public string Name { get; set; }
         public string Email { get; set; }
 
-        // Required system properties
-        public DateTimeOffset? Timestamp { get; set; }
-        public ETag ETag { get; set; }
+        public DateTime CreatedAt { get; set; } = DateTime.UtcNow;  
     }
 }
