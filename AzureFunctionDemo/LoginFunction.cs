@@ -4,6 +4,7 @@ using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
+using System.Net;
 
 namespace AzureFunctionDemo;
 
@@ -20,28 +21,27 @@ public class LoginFunction
 
     [Function("Login")]
     public async Task<HttpResponseData> Run(
-        [HttpTrigger(AuthorizationLevel.Function, "post", Route = "login")] HttpRequestData req)
+     [HttpTrigger(AuthorizationLevel.Function, "post", Route = "login")] HttpRequestData req,
+     FunctionContext context)
     {
-        using var reader = new StreamReader(req.Body);
-        string body = await reader.ReadToEndAsync();
+        var logger = context.GetLogger("Login");
 
+        string body = await new StreamReader(req.Body).ReadToEndAsync();
         var data = JsonConvert.DeserializeObject<LoginRequest>(body);
-
-        var response = req.CreateResponse();
 
         if (data == null || string.IsNullOrEmpty(data.Email))
         {
-            response.StatusCode = System.Net.HttpStatusCode.BadRequest;
-            await response.WriteAsJsonAsync(new { error = "Please provide email" });
-            return response;
+            var bad = req.CreateResponse(HttpStatusCode.BadRequest);
+            await bad.WriteAsJsonAsync(new { error = "Please provide email" });
+            return bad;
         }
 
         var user = await _userService.GetUser(data.Email);
         if (user == null)
         {
-            response.StatusCode = System.Net.HttpStatusCode.Unauthorized;
-            await response.WriteAsJsonAsync(new { error = "Invalid email or user not found" });
-            return response;
+            var unauthorized = req.CreateResponse(HttpStatusCode.Unauthorized);
+            await unauthorized.WriteAsJsonAsync(new { error = "Invalid email or user not found" });
+            return unauthorized;
         }
 
         string secret = Environment.GetEnvironmentVariable("JwtSecret");
@@ -50,7 +50,7 @@ public class LoginFunction
 
         string token = JwtHelper.GenerateToken(user.Email, user.Name, secret, issuer, audience);
 
-        response.StatusCode = System.Net.HttpStatusCode.OK;
+        var response = req.CreateResponse(HttpStatusCode.OK);
         await response.WriteAsJsonAsync(new
         {
             token,
@@ -61,6 +61,7 @@ public class LoginFunction
 
         return response;
     }
+
 }
 
 public class LoginRequest
