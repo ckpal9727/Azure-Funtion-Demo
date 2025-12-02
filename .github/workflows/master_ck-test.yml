@@ -38,7 +38,7 @@ jobs:
           subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_510F65FC7912424EB551BF15AAC5BC5E }}
 
       - name: Deploy to Azure Function App
-        uses: Azure/functions-action@v4
+        uses: azure/functions-action@v1
         with:
           app-name: 'ck-test'
           slot-name: 'Production'
