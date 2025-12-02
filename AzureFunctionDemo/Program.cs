@@ -7,7 +7,7 @@ using Microsoft.Extensions.Hosting;
 var builder = FunctionsApplication.CreateBuilder(args);
 
 // Register middleware (host-level)
-//builder.UseMiddleware<JwtAuthMiddleware>();
+builder.UseMiddleware<JwtAuthMiddleware>();
 
 // Register services
 builder.Services.AddSingleton<IUserService>(sp =>
