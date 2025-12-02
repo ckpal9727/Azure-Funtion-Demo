@@ -1,6 +1,7 @@
 using Azure;
 using Azure.Data.Tables;
 using AzureFunctionDemo.Models;
+using AzureFunctionDemo.Services;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Azure.Functions.Worker;
@@ -10,11 +11,11 @@ namespace AzureFunctionDemo;
 
 public class GetUserByEmailFunction
 {
-    private readonly ILogger<GetUserByEmailFunction> _logger;
+    private readonly IUserService _userService;
 
-    public GetUserByEmailFunction(ILogger<GetUserByEmailFunction> logger)
+    public GetUserByEmailFunction(IUserService userService)
     {
-        _logger = logger;
+        _userService = userService;
     }
 
     [Function("GetUserByEmail")]
@@ -22,19 +23,11 @@ public class GetUserByEmailFunction
         [HttpTrigger(AuthorizationLevel.Function, "get", Route = "users/{email}")] HttpRequest req,
         string email)
     {
-        _logger.LogInformation($"Fetching user with email: {email}");
+        var result = await _userService.GetUser(email);
 
-        string connectionString = Environment.GetEnvironmentVariable("AzureWebJobsStorage");
-        var tableClient = new TableClient(connectionString, "UsersTable");
+        if (result == null)
+            return new NotFoundObjectResult(new { message = "Not found" });
 
-        try
-        {
-            var entity = await tableClient.GetEntityAsync<UserEntity>("Users", email);
-            return new OkObjectResult(entity.Value);
-        }
-        catch (RequestFailedException)
-        {
-            return new NotFoundObjectResult(new { message = $"User with email {email} not found" });
-        }
+        return new OkObjectResult(result);
     }
 }

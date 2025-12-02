@@ -1,5 +1,6 @@
 using Azure.Data.Tables;
 using AzureFunctionDemo.Models;
+using AzureFunctionDemo.Services;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Azure.Functions.Worker;
@@ -9,29 +10,18 @@ namespace AzureFunctionDemo;
 
 public class GetUsersFunction
 {
-    private readonly ILogger<GetUsersFunction> _logger;
+    private readonly IUserService _userService;
 
-    public GetUsersFunction(ILogger<GetUsersFunction> logger)
+    public GetUsersFunction(IUserService userService)
     {
-        _logger = logger;
+        _userService = userService;
     }
 
     [Function("GetUsers")]
     public async Task<IActionResult> Run(
         [HttpTrigger(AuthorizationLevel.Function, "get", Route = "users")] HttpRequest req)
     {
-        _logger.LogInformation("Fetching all users from Azure Table Storage.");
-
-        string connectionString = Environment.GetEnvironmentVariable("AzureWebJobsStorage");
-        var tableClient = new TableClient(connectionString, "UsersTable");
-
-        var users = new List<UserEntity>();
-
-        await foreach (UserEntity entity in tableClient.QueryAsync<UserEntity>())
-        {
-            users.Add(entity);
-        }
-
+        var users = await _userService.GetUsers();
         return new OkObjectResult(users);
     }
 }

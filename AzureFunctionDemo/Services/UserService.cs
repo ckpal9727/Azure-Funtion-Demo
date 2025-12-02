@@ -1,0 +1,59 @@
+﻿using Azure.Data.Tables;
+using AzureFunctionDemo.Models;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+
+namespace AzureFunctionDemo.Services
+{
+    public class UserService : IUserService
+    {
+        private readonly TableClient _tableClient;
+
+        public UserService(string storageConnectionString)
+        {
+            _tableClient = new TableClient(storageConnectionString, "UsersTable");
+            _tableClient.CreateIfNotExists();
+        }
+
+        public async Task<bool> RegisterUser(string name, string email)
+        {
+            var entity = new UserEntity
+            {
+                Name = name,
+                Email = email,
+                RowKey = email
+            };
+
+            await _tableClient.UpsertEntityAsync(entity);
+            return true;
+        }
+
+        public async Task<UserEntity?> GetUser(string email)
+        {
+            try
+            {
+                var response = await _tableClient.GetEntityAsync<UserEntity>("Users", email);
+                return response.Value;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        public async Task<List<UserEntity>> GetUsers()
+        {
+            var list = new List<UserEntity>();
+
+            await foreach (var entity in _tableClient.QueryAsync<UserEntity>())
+            {
+                list.Add(entity);
+            }
+
+            return list;
+        }
+    }
+}
