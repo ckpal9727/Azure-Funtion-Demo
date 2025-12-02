@@ -1,8 +1,7 @@
 using AzureFunctionDemo.Helpers;
 using AzureFunctionDemo.Services;
-using Microsoft.AspNetCore.Http;
-using Microsoft.AspNetCore.Mvc;
 using Microsoft.Azure.Functions.Worker;
+using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
 
@@ -20,38 +19,47 @@ public class LoginFunction
     }
 
     [Function("Login")]
-    public async Task<IActionResult> Run(
-        [HttpTrigger(AuthorizationLevel.Function, "post", Route = "login")] HttpRequest req)
+    public async Task<HttpResponseData> Run(
+        [HttpTrigger(AuthorizationLevel.Function, "post", Route = "login")] HttpRequestData req)
     {
-        string body = await new StreamReader(req.Body).ReadToEndAsync();
+        using var reader = new StreamReader(req.Body);
+        string body = await reader.ReadToEndAsync();
+
         var data = JsonConvert.DeserializeObject<LoginRequest>(body);
 
-        if (data == null || string.IsNullOrEmpty(data.Email))
-            return new BadRequestObjectResult(new { error = "Please provide email" });
+        var response = req.CreateResponse();
 
-        // Check if user exists in SQL
+        if (data == null || string.IsNullOrEmpty(data.Email))
+        {
+            response.StatusCode = System.Net.HttpStatusCode.BadRequest;
+            await response.WriteAsJsonAsync(new { error = "Please provide email" });
+            return response;
+        }
+
         var user = await _userService.GetUser(data.Email);
         if (user == null)
-            return new UnauthorizedObjectResult(new { error = "Invalid email or user not found" });
+        {
+            response.StatusCode = System.Net.HttpStatusCode.Unauthorized;
+            await response.WriteAsJsonAsync(new { error = "Invalid email or user not found" });
+            return response;
+        }
 
-        // Load JWT config
-        string? secret = Environment.GetEnvironmentVariable("JwtSecret");
-        string? issuer = Environment.GetEnvironmentVariable("JwtIssuer");
-        string? audience = Environment.GetEnvironmentVariable("JwtAudience");
+        string secret = Environment.GetEnvironmentVariable("JwtSecret");
+        string issuer = Environment.GetEnvironmentVariable("JwtIssuer");
+        string audience = Environment.GetEnvironmentVariable("JwtAudience");
 
-        if (string.IsNullOrEmpty(secret) || string.IsNullOrEmpty(issuer) || string.IsNullOrEmpty(audience))
-            return new ObjectResult(new { error = "JWT configuration missing" }) { StatusCode = 500 };
-
-        // Generate Token
         string token = JwtHelper.GenerateToken(user.Email, user.Name, secret, issuer, audience);
 
-        return new OkObjectResult(new
+        response.StatusCode = System.Net.HttpStatusCode.OK;
+        await response.WriteAsJsonAsync(new
         {
-            token = token,
+            token,
             expiresIn = 7200,
             email = user.Email,
             name = user.Name
         });
+
+        return response;
     }
 }
 
