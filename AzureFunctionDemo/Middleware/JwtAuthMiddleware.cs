@@ -1,13 +1,11 @@
 ﻿using Microsoft.Azure.Functions.Worker;
+using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Azure.Functions.Worker.Middleware;
 using Microsoft.Extensions.Logging;
 using Microsoft.IdentityModel.Tokens;
-using System;
-using System.Collections.Generic;
 using System.IdentityModel.Tokens.Jwt;
-using System.Linq;
+using System.Net;
 using System.Text;
-using System.Threading.Tasks;
 
 namespace AzureFunctionDemo.Middleware
 {
@@ -22,63 +20,102 @@ namespace AzureFunctionDemo.Middleware
 
         public async Task Invoke(FunctionContext context, FunctionExecutionDelegate next)
         {
-            // Skip JWT check on Login function
-            if (context.FunctionDefinition.Name == "Login")
+            // Allow Login to skip JWT validation
+            if (context.FunctionDefinition.Name.Equals("Login", StringComparison.OrdinalIgnoreCase))
             {
                 await next(context);
                 return;
             }
 
-            // Read Authorization header
-            var httpReq = await context.GetHttpRequestDataAsync();
-            if (httpReq == null)
+            var request = await context.GetHttpRequestDataAsync();
+            if (request == null)
             {
-                await next(context);
+                await WriteUnauthorized(context, null, "Invalid HTTP request (no request data)");
                 return;
             }
 
-            if (!httpReq.Headers.TryGetValues("Authorization", out var authHeaders))
+            if (!request.Headers.TryGetValues("Authorization", out var headerValues))
             {
-                _logger.LogWarning("Missing Authorization header.");
-                throw new UnauthorizedAccessException("Missing Authorization Header");
+                await WriteUnauthorized(context, request, "Missing Authorization header");
+                return;
             }
 
-            var authHeader = authHeaders.FirstOrDefault();
-            if (authHeader == null || !authHeader.StartsWith("Bearer "))
+            var header = headerValues.FirstOrDefault();
+            if (string.IsNullOrEmpty(header) || !header.StartsWith("Bearer "))
             {
-                throw new UnauthorizedAccessException("Invalid Authorization Header");
+                await WriteUnauthorized(context, request, "Invalid Authorization header");
+                return;
             }
 
-            string token = authHeader.Substring("Bearer ".Length);
+            var token = header.Substring("Bearer ".Length).Trim();
 
             try
             {
-                string? secret = Environment.GetEnvironmentVariable("JwtSecret");
-                string? issuer = Environment.GetEnvironmentVariable("JwtIssuer");
-                string? audience = Environment.GetEnvironmentVariable("JwtAudience");
+                string secret = Environment.GetEnvironmentVariable("JwtSecret");
+                string issuer = Environment.GetEnvironmentVariable("JwtIssuer");
+                string audience = Environment.GetEnvironmentVariable("JwtAudience");
 
-                var tokenHandler = new JwtSecurityTokenHandler();
+                if (string.IsNullOrEmpty(secret) ||
+                    string.IsNullOrEmpty(issuer) ||
+                    string.IsNullOrEmpty(audience))
+                {
+                    await WriteUnauthorized(context, request, "JWT configuration missing");
+                    return;
+                }
+
+                var handler = new JwtSecurityTokenHandler();
                 var key = Encoding.UTF8.GetBytes(secret);
 
-                tokenHandler.ValidateToken(token, new TokenValidationParameters
-                {
-                    ValidateIssuer = true,
-                    ValidateAudience = true,
-                    ValidateLifetime = true,
-                    ValidateIssuerSigningKey = true,
-                    ValidIssuer = issuer,
-                    ValidAudience = audience,
-                    IssuerSigningKey = new SymmetricSecurityKey(key)
-                }, out SecurityToken validatedToken);
+                handler.ValidateToken(
+                    token,
+                    new TokenValidationParameters
+                    {
+                        ValidIssuer = issuer,
+                        ValidAudience = audience,
+                        IssuerSigningKey = new SymmetricSecurityKey(key),
+                        ValidateIssuerSigningKey = true,
+                        ValidateLifetime = true,
+                        ValidateAudience = true,
+                        ValidateIssuer = true
+                    },
+                    out _
+                );
 
-                // Token is valid → proceed
+                // Token is valid
                 await next(context);
+            }
+            catch (SecurityTokenExpiredException)
+            {
+                await WriteUnauthorized(context, request, "Token expired");
             }
             catch (Exception ex)
             {
-                _logger.LogError($"JWT validation failed: {ex.Message}");
-                throw new UnauthorizedAccessException("Invalid or expired token");
+                _logger.LogError($"JWT validation error: {ex.Message}");
+                await WriteUnauthorized(context, request, "Invalid or expired token");
             }
+        }
+
+        private static async Task WriteUnauthorized(
+            FunctionContext context,
+            HttpRequestData request,
+            string message)
+        {
+            HttpResponseData response;
+
+            if (request != null)
+            {
+                response = request.CreateResponse(HttpStatusCode.Unauthorized);
+            }
+            else
+            {
+                // Fallback when HttpRequestData is completely unavailable
+                var inv = context.GetInvocationResult();
+                var fakeRequest = (HttpRequestData)inv.Value;
+                response = fakeRequest.CreateResponse(HttpStatusCode.Unauthorized);
+            }
+
+            await response.WriteStringAsync(message);
+            context.GetInvocationResult().Value = response;
         }
     }
 }
