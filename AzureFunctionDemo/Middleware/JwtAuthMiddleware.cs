@@ -20,102 +20,72 @@ namespace AzureFunctionDemo.Middleware
 
         public async Task Invoke(FunctionContext context, FunctionExecutionDelegate next)
         {
-            // Allow Login to skip JWT validation
-            if (context.FunctionDefinition.Name.Equals("Login", StringComparison.OrdinalIgnoreCase))
+            // Skip JWT check on Login
+            if (context.FunctionDefinition.Name == "Login")
             {
                 await next(context);
                 return;
             }
 
-            var request = await context.GetHttpRequestDataAsync();
-            if (request == null)
+            var req = await context.GetHttpRequestDataAsync();
+            if (req == null)
             {
-                await WriteUnauthorized(context, null, "Invalid HTTP request (no request data)");
+                await next(context);
                 return;
             }
 
-            if (!request.Headers.TryGetValues("Authorization", out var headerValues))
+            if (!req.Headers.TryGetValues("Authorization", out var authHeaders))
             {
-                await WriteUnauthorized(context, request, "Missing Authorization header");
+                await WriteUnauthorized(context, "Missing Authorization header");
                 return;
             }
 
-            var header = headerValues.FirstOrDefault();
-            if (string.IsNullOrEmpty(header) || !header.StartsWith("Bearer "))
+            var header = authHeaders.FirstOrDefault();
+            if (header == null || !header.StartsWith("Bearer "))
             {
-                await WriteUnauthorized(context, request, "Invalid Authorization header");
+                await WriteUnauthorized(context, "Invalid Authorization header");
                 return;
             }
 
-            var token = header.Substring("Bearer ".Length).Trim();
+            var token = header.Substring("Bearer ".Length);
 
             try
             {
-                string secret = Environment.GetEnvironmentVariable("JwtSecret");
-                string issuer = Environment.GetEnvironmentVariable("JwtIssuer");
-                string audience = Environment.GetEnvironmentVariable("JwtAudience");
-
-                if (string.IsNullOrEmpty(secret) ||
-                    string.IsNullOrEmpty(issuer) ||
-                    string.IsNullOrEmpty(audience))
-                {
-                    await WriteUnauthorized(context, request, "JWT configuration missing");
-                    return;
-                }
+                string secret = Environment.GetEnvironmentVariable("JwtSecret")!;
+                string issuer = Environment.GetEnvironmentVariable("JwtIssuer")!;
+                string audience = Environment.GetEnvironmentVariable("JwtAudience")!;
 
                 var handler = new JwtSecurityTokenHandler();
-                var key = Encoding.UTF8.GetBytes(secret);
+                var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secret));
 
-                handler.ValidateToken(
-                    token,
-                    new TokenValidationParameters
-                    {
-                        ValidIssuer = issuer,
-                        ValidAudience = audience,
-                        IssuerSigningKey = new SymmetricSecurityKey(key),
-                        ValidateIssuerSigningKey = true,
-                        ValidateLifetime = true,
-                        ValidateAudience = true,
-                        ValidateIssuer = true
-                    },
-                    out _
-                );
+                handler.ValidateToken(token, new TokenValidationParameters
+                {
+                    ValidIssuer = issuer,
+                    ValidAudience = audience,
+                    IssuerSigningKey = key,
+                    ValidateIssuer = true,
+                    ValidateAudience = true,
+                    ValidateLifetime = true,
+                    ValidateIssuerSigningKey = true
+                }, out _);
 
-                // Token is valid
+                // Valid → go next
                 await next(context);
-            }
-            catch (SecurityTokenExpiredException)
-            {
-                await WriteUnauthorized(context, request, "Token expired");
             }
             catch (Exception ex)
             {
-                _logger.LogError($"JWT validation error: {ex.Message}");
-                await WriteUnauthorized(context, request, "Invalid or expired token");
+                _logger.LogError(ex, "JWT validation failed");
+                await WriteUnauthorized(context, "Invalid or expired token");
             }
         }
 
-        private static async Task WriteUnauthorized(
-            FunctionContext context,
-            HttpRequestData request,
-            string message)
+        private async Task WriteUnauthorized(FunctionContext context, string message)
         {
-            HttpResponseData response;
+            var req = await context.GetHttpRequestDataAsync();
+            var res = req!.CreateResponse(HttpStatusCode.Unauthorized);
+            await res.WriteStringAsync(message);
 
-            if (request != null)
-            {
-                response = request.CreateResponse(HttpStatusCode.Unauthorized);
-            }
-            else
-            {
-                // Fallback when HttpRequestData is completely unavailable
-                var inv = context.GetInvocationResult();
-                var fakeRequest = (HttpRequestData)inv.Value;
-                response = fakeRequest.CreateResponse(HttpStatusCode.Unauthorized);
-            }
-
-            await response.WriteStringAsync(message);
-            context.GetInvocationResult().Value = response;
+            context.GetInvocationResult().Value = res;
         }
     }
 }
