@@ -12,5 +12,8 @@ namespace AzureFunctionDemo.Services
         Task<UserEntity?> GetUser(string email);
         Task<List<UserEntity>> GetUsers();
         Task<bool> RegisterUser(string name, string email);
+        Task<bool> UpdateUser(string email, string newName);
+        Task<bool> DeleteUser(string email);   // NEW
     }
+
 }

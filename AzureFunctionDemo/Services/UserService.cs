@@ -55,5 +55,37 @@ namespace AzureFunctionDemo.Services
 
             return list;
         }
+        public async Task<bool> UpdateUser(string email, string newName)
+        {
+            try
+            {
+                var entity = await _tableClient.GetEntityAsync<UserEntity>("Users", email);
+                var user = entity.Value;
+
+                user.Name = newName; // modify field
+
+                await _tableClient.UpdateEntityAsync(user, Azure.ETag.All);
+
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+        public async Task<bool> DeleteUser(string email)
+        {
+            try
+            {
+                await _tableClient.DeleteEntityAsync("Users", email);
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+
     }
 }
